@@ -1,0 +1,911 @@
+#!/bin/bash
+# cappa database extraction merge
+# ********************************************************************
+# Ericsson Radio Systems AB                                     SCRIPT
+# ********************************************************************
+#
+#
+# (c) Ericsson Radio Systems AB 2021 - All rights reserved.
+#
+# The copyright to the computer program(s) herein is the property
+# of Ericsson Radio Systems AB, Sweden. The programs may be used
+# and/or copied only with the written permission from Ericsson Radio
+# Systems AB or in accordance with the terms and conditions stipulated
+# in the agreement/contract under which the program(s) have been
+# supplied.
+#
+# ********************************************************************
+# Name    : cappa_merge.bsh
+# Date    : 26/05/2021
+# Revision: A
+# Purpose : Merge properly a csv made up of merged csvs
+#
+#
+# Version Information:
+#       Version Who             Date            Comment
+#       0.1     emihaye         27/05/2021      Initial draft
+#
+# Usage   : "cappa_merge.bsh -h" to give usage
+#
+# ********************************************************************
+
+
+LOG=/tmp/cappa_merge.log
+
+datestamp() {
+#####################################
+# Function to output a formatted date
+#####################################
+# Inputs:       $1 [1|2|3] (optional)
+#                               for 4 different output formats
+# Outputs:      none
+# Returns:      0 success
+#####################################
+[[ $1 -eq 1 ]] && date +%H:%M:%S
+[[ $1 -eq 2 ]] && date +%d-%m-%Y_%H-%M-%S
+[[ $1 -eq 3 ]] && date +%Y-%m-%d
+[[ -z $1 ]] && date
+
+return 0
+}
+
+
+logOut() {
+#####################################
+# Function to send formatted output to STDOUT and $LOG
+#####################################
+# Inputs:       $1 [DEBUG|WARN|ERROR|INFO|ECHO]
+#                               for the type of formatting
+#                       $2 <string>
+#                               for the message
+# Outputs:      none
+# Returns:      0 success
+#                       1 incorrect usage
+#####################################
+[[ "$1" == "DEBUG" ]] && {
+        [[ "$DEBUG" == "y" ]] && echo -e $(datestamp 1)"   [DEBUG]\t${@:2}" |$TEE -a $LOG 2>&1
+        return 0
+        }
+[[ "$1" == "WARN" ]] && {
+        echo -e $(datestamp 1)"   \033[1;30;33m[WARNING]\033[0m   ${@:2}"
+        echo -e $(datestamp 1)"   [WARNING]   ${@:2}" >> $LOG 2>&1
+        return 0
+        }
+[[ "$1" == "ERROR" ]] && {
+        echo -e  $(datestamp 1)"   \033[1;30;31m[ERROR]\033[0m   ${@:2}"
+        echo -e  $(datestamp 1)"   [ERROR]   ${@:2}" >> $LOG 2>&1
+        return 0
+        }
+[[ "$1" == "INFO" ]] && {
+        echo -e $(datestamp 1)"   \033[1;30;32m[INFO]\033[0m   ${@:2}"
+        echo -e $(datestamp 1)"   [INFO]   ${@:2}" >> $LOG 2>&1
+        return 0
+        }
+[[ "$1" == "ECHO" ]] && {
+        echo -e $(datestamp 1)"   [ECHO]   ${@:2}"
+        return 0
+        }
+echo -e "[WARNING: bad $FUNCNAME call]\t$@" |$TEE -a $LOG 2>&1
+return 1
+}
+
+exitOut () {
+#####################################
+# Function to exit the script with a code and message
+#####################################
+# Inputs:       $1 <integer>
+#                               for the exit code to be used
+#                       $2 <string>
+#                               for the exit message
+# Outputs:      none
+# Returns:      exit
+#####################################
+
+local l_exitCode="${1:-0}"
+local l_exitMsg="${@:2}"
+
+
+if      [[ $l_exitCode -ne 0 ]]; then
+        	logOut "ERROR" "$l_exitMsg"
+else
+        	logOut "ECHO" "$l_exitMsg"
+fi
+
+exit $l_exitCode
+
+}
+
+
+usage() {
+#####################################
+# Function to output usage help
+#####################################
+# Inputs:       none
+# Outputs:      none
+# Returns:      0
+#####################################
+logOut "DEBUG" "$FUNCNAME: running with ARGS:[$@]"
+
+cat << EOF
+
+Usage:  cappa_merge.bsh -d <database name> -c <POD name> [-h]
+
+        Where :
+                -d Name of the directory containing the database files
+		-c name (or start of name) of a POD to report on (use all if all pods required)
+                -h      Print help (this message).
+
+        Example:
+                cappa_merge.bsh -d /root/report_db -c cmserv
+                cappa_merge.bsh -d /tmp/mystuff.db -c all
+
+EOF
+
+return 0
+
+}
+
+granted-capabilities() {
+#####################################
+# Function to process granted-capabilities
+#####################################
+# Inputs:       none
+# Outputs:      none
+# Returns:      0
+#####################################
+logOut "DEBUG" "$FUNCNAME: running with ARGS:[$@]"
+_file="granted-capabilities"
+logOut "INFO" "Merging ${_file}"
+
+
+cd /var/tmp/cappa_merge/${POD}
+> m2_${_file}.csv
+
+IFS=","
+
+exec 3< /var/tmp/cappa_merge/${POD}/m1_${_file}.csv
+while read _f01 _f02 _f03 _f04 _f05 _f06 _f07 _f08 _f09 _COUNT _f10 _f11 <&3
+do
+        if [[ "$_f01" == "PODNAME" ]]; then
+                continue
+        fi
+        echo "$_f01,$_f02,$_f03,$_f04,$_f05,$_f06,$_f07,$_f08,$_f09,$_f10,$_f11,$_COUNT" >> m2_${_file}.csv
+done
+exec 3>&-
+sort -o s1_${_file}.csv m2_${_file}.csv
+
+echo "PODNAME,COMMAND,EXECUTOR,CAP_ID,CAP,SYSCALL_ID,IA32,SYSCALL_NAME,RETVAL,COUNT,CRED_OVERR_ACTIVE,IN_CONTAINER_CAPS" > /var/tmp/cappa_out/${POD}/${_file}.csv
+
+exec 3< s1_${_file}.csv
+read _f01 _f02 _f03 _f04 _f05 _f06 _f07 _f08 _f09 _f10 _f11 _COUNT <&3
+_l01="${_f01}"
+_l02="${_f02}"
+_l03="${_f03}"
+_l04="${_f04}"
+_l05="${_f05}"
+_l06="${_f06}"
+_l07="${_f07}"
+_l08="${_f08}"
+_l09="${_f09}"
+_l10="${_f10}"
+_l11="${_f11}"
+_CNT="${_COUNT}"
+
+while read _f01 _f02 _f03 _f04 _f05 _f06 _f07 _f08 _f09 _f10 _f11 _COUNT <&3
+do
+        if [[ "$_f01,$_f02,$_f03,$_f04,$_f05,$_f06,$_f07,$_f08,$_f09,$_f10,$_f11" == "$_l01,$_l02,$_l03,$_l04,$_l05,$_l06,$_l07,$_l08,$_l09,$_l10,$_l11" ]]; then
+                _CNT=$((_CNT + _COUNT))
+                continue
+        fi
+        echo "$_l01,$_l02,$_l03,$_l04,$_l05,$_l06,$_l07,$_l08,$_l09,$_CNT,$_l10,$_l11" >> /var/tmp/cappa_out/${POD}/${_file}.csv
+        _l01="${_f01}"
+        _l02="${_f02}"
+        _l03="${_f03}"
+        _l04="${_f04}"
+        _l05="${_f05}"
+        _l06="${_f06}"
+        _l07="${_f07}"
+        _l08="${_f08}"
+        _l09="${_f09}"
+        _l10="${_f10}"
+        _l11="${_f11}"
+        _CNT="${_COUNT}"
+done
+if [[ `wc -l /var/tmp/cappa_out/${POD}/${_file}.csv | cut -d " " -f 1` -gt 1 ]]; then
+	echo "$_l01,$_l02,$_l03,$_l04,$_l05,$_l06,$_l07,$_l08,$_l09,$_CNT,$_l10,$_l11" >> /var/tmp/cappa_out/${POD}/${_file}.csv
+fi
+exec 3>&-
+
+return 0
+}
+
+granted-stacks() {
+#####################################
+# Function to process granted-stacks
+#####################################
+# Inputs:       none
+# Outputs:      none
+# Returns:      0
+#####################################
+logOut "DEBUG" "$FUNCNAME: running with ARGS:[$@]"
+_file="granted-stacks"
+logOut "INFO" "Merging ${_file}"
+
+cd /var/tmp/cappa_merge/${POD}
+> m2_${_file}.csv
+
+IFS=","
+
+exec 3< /var/tmp/cappa_merge/${POD}/m1_${_file}.csv
+while read _f01 _f02 _f03 _f04 _f05 _f06 _f07 _f08 _f09 _COUNT _f10 _f11 _f12 <&3
+do
+        if [[ "$_f02" == "PODNAME" ]]; then
+                continue
+        fi
+        echo "$_f01,$_f02,$_f03,$_f04,$_f05,$_f06,$_f07,$_f08,$_f09,$_f10,$_f11,$_f12,$_COUNT" >> m2_${_file}.csv
+done
+exec 3>&-
+sort -o s1_${_file}.csv m2_${_file}.csv
+
+echo "CA_ID,PODNAME,COMMAND,EXECUTOR,CAP_ID,CAP,SYSCALL_ID,IA32,SYSCALL_NAME,COUNT,IN_CONTAINER_CAPS,ADDRESS,SYMBOL" > /var/tmp/cappa_out/${POD}/${_file}.csv
+
+exec 3< s1_${_file}.csv
+read _f01 _f02 _f03 _f04 _f05 _f06 _f07 _f08 _f09 _f10 _f11 _f12 _COUNT <&3
+_l01="${_f01}"
+_l02="${_f02}"
+_l03="${_f03}"
+_l04="${_f04}"
+_l05="${_f05}"
+_l06="${_f06}"
+_l07="${_f07}"
+_l08="${_f08}"
+_l09="${_f09}"
+_l10="${_f10}"
+_l11="${_f11}"
+_l12="${_f12}"
+_CNT="${_COUNT}"
+
+while read _f01 _f02 _f03 _f04 _f05 _f06 _f07 _f08 _f09 _f10 _f11 _f12 _COUNT <&3
+do
+        if [[ "$_f01,$_f02,$_f03,$_f04,$_f05,$_f06,$_f07,$_f08,$_f09,$_f10,$_f11,$_f12" == "$_l01,$_l02,$_l03,$_l04,$_l05,$_l06,$_l07,$_l08,$_l09,$_l10,$_l11,$_l12" ]]; then
+                _CNT=$((_CNT + _COUNT))
+                continue
+        fi
+        echo "$_l01,$_l02,$_l03,$_l04,$_l05,$_l06,$_l07,$_l08,$_l09,$_CNT,$_l10,$_l11,$_l12" >> /var/tmp/cappa_out/${POD}/${_file}.csv
+        _l01="${_f01}"
+        _l02="${_f02}"
+        _l03="${_f03}"
+        _l04="${_f04}"
+        _l05="${_f05}"
+        _l06="${_f06}"
+        _l07="${_f07}"
+        _l08="${_f08}"
+        _l09="${_f09}"
+        _l10="${_f10}"
+        _l11="${_f11}"
+        _l12="${_f12}"
+        _CNT="${_COUNT}"
+done
+if [[ `wc -l /var/tmp/cappa_out/${POD}/${_file}.csv | cut -d " " -f 1` -gt 1 ]]; then
+	echo "$_l01,$_l02,$_l03,$_l04,$_l05,$_l06,$_l07,$_l08,$_l09,$_CNT,$_l10,$_l11,$_l12" >> /var/tmp/cappa_out/${POD}/${_file}.csv
+fi
+exec 3>&-
+
+return 0
+}
+
+all-syscalls() {
+#####################################
+# Function to process all-syscalls
+#####################################
+# Inputs:       none
+# Outputs:      none
+# Returns:      0
+#####################################
+logOut "DEBUG" "$FUNCNAME: running with ARGS:[$@]"
+_file="all-syscalls"
+logOut "INFO" "Merging ${_file}"
+
+cd /var/tmp/cappa_merge/${POD}
+> m2_${_file}.csv
+
+IFS=","
+
+exec 3< /var/tmp/cappa_merge/${POD}/m1_${_file}.csv
+while read _f01 _f02 _f03 _f04 _f05 _f06 _f07 _COUNT <&3
+do
+        if [[ "$_f01" == "PODNAME" ]]; then
+                continue
+        fi
+        echo "$_f01,$_f02,$_f03,$_f04,$_f05,$_f06,$_f07,$_COUNT" >> m2_${_file}.csv
+done
+exec 3>&-
+sort -o s1_${_file}.csv m2_${_file}.csv
+
+echo "PODNAME,EXECUTOR,SYSCALL_NUM,IA32,SYSCALL_NAME,ERRNO,ERRNO_NAME,COUNT" > /var/tmp/cappa_out/${POD}/${_file}.csv
+
+exec 3< s1_${_file}.csv
+read _f01 _f02 _f03 _f04 _f05 _f06 _f07 _COUNT <&3
+_l01="${_f01}"
+_l02="${_f02}"
+_l03="${_f03}"
+_l04="${_f04}"
+_l05="${_f05}"
+_l06="${_f06}"
+_l07="${_f07}"
+_CNT="${_COUNT}"
+
+while read _f01 _f02 _f03 _f04 _f05 _f06 _f07 _COUNT <&3
+do
+        if [[ "$_f01,$_f02,$_f03,$_f04,$_f05,$_f06,$_f07" == "$_l01,$_l02,$_l03,$_l04,$_l05,$_l06,$_l07" ]]; then
+                _CNT=$((_CNT + _COUNT))
+                continue
+        fi
+        echo "$_l01,$_l02,$_l03,$_l04,$_l05,$_l06,$_l07,$_CNT" >> /var/tmp/cappa_out/${POD}/${_file}.csv
+        _l01="${_f01}"
+        _l02="${_f02}"
+        _l03="${_f03}"
+        _l04="${_f04}"
+        _l05="${_f05}"
+        _l06="${_f06}"
+        _l07="${_f07}"
+        _CNT="${_COUNT}"
+done
+if [[ `wc -l /var/tmp/cappa_out/${POD}/${_file}.csv | cut -d " " -f 1` -gt 1 ]]; then
+	echo "$_l01,$_l02,$_l03,$_l04,$_l05,$_l06,$_l07,$_CNT" >> /var/tmp/cappa_out/${POD}/${_file}.csv
+fi
+exec 3>&-
+
+return 0
+}
+
+non-whitelisted-syscalls() {
+#####################################
+# Function to process non-whitelisted-syscalls
+#####################################
+# Inputs:       none
+# Outputs:      none
+# Returns:      0
+#####################################
+logOut "DEBUG" "$FUNCNAME: running with ARGS:[$@]"
+_file="non-whitelisted-syscalls"
+logOut "INFO" "Merging ${_file}"
+
+cd /var/tmp/cappa_merge/${POD}
+> m2_${_file}.csv
+
+IFS=","
+
+exec 3< /var/tmp/cappa_merge/${POD}/m1_${_file}.csv
+while read _f01 _f02 _f03 _f04 _f05 _f06 _f07 _f08 _COUNT <&3
+do
+        if [[ "$_f01" == "PODNAME" ]]; then
+                continue
+        fi
+        echo "$_f01,$_f02,$_f03,$_f04,$_f05,$_f06,$_f07,$_f08,$_COUNT" >> m2_${_file}.csv
+done
+exec 3>&-
+sort -o s1_${_file}.csv m2_${_file}.csv
+
+echo "PODNAME,EXECUTOR,COMM,SYSCALL_NUM,SYSCALL_NAME,IA32,ERRNO,ERRNO_NAME,COUNT" > /var/tmp/cappa_out/${POD}/${_file}.csv
+
+exec 3< s1_${_file}.csv
+read _f01 _f02 _f03 _f04 _f05 _f06 _f07 _f08 _COUNT <&3
+_l01="${_f01}"
+_l02="${_f02}"
+_l03="${_f03}"
+_l04="${_f04}"
+_l05="${_f05}"
+_l06="${_f06}"
+_l07="${_f07}"
+_l08="${_f08}"
+_CNT="${_COUNT}"
+
+while read _f01 _f02 _f03 _f04 _f05 _f06 _f07 _f08 _COUNT <&3
+do
+        if [[ "$_f01,$_f02,$_f03,$_f04,$_f05,$_f06,$_f07,$_f08" == "$_l01,$_l02,$_l03,$_l04,$_l05,$_l06,$_l07,$_l08" ]]; then
+                _CNT=$((_CNT + _COUNT))
+                continue
+        fi
+        echo "$_l01,$_l02,$_l03,$_l04,$_l05,$_l06,$_l07,$_l08,$_CNT" >> /var/tmp/cappa_out/${POD}/${_file}.csv
+        _l01="${_f01}"
+        _l02="${_f02}"
+        _l03="${_f03}"
+        _l04="${_f04}"
+        _l05="${_f05}"
+        _l06="${_f06}"
+        _l07="${_f07}"
+        _l08="${_f08}"
+        _CNT="${_COUNT}"
+done
+if [[ `wc -l /var/tmp/cappa_out/${POD}/${_file}.csv | cut -d " " -f 1` -gt 1 ]]; then
+	echo "$_l01,$_l02,$_l03,$_l04,$_l05,$_l06,$_l07,$_l08,$_CNT" >> /var/tmp/cappa_out/${POD}/${_file}.csv
+fi
+exec 3>&-
+
+return 0
+}
+
+all-files() {
+#####################################
+# Function to process all-files
+#####################################
+# Inputs:       none
+# Outputs:      none
+# Returns:      0
+#####################################
+logOut "DEBUG" "$FUNCNAME: running with ARGS:[$@]"
+_file="all-files"
+logOut "INFO" "Merging ${_file}"
+
+cd /var/tmp/cappa_merge/${POD}
+> m2_${_file}.csv
+
+IFS=","
+
+exec 3< /var/tmp/cappa_merge/${POD}/m1_${_file}.csv
+while read _f01 _f02 _f03 _f04 _f05 _f06 _f07 _f08 _COUNT <&3
+do
+        if [[ "$_f01" == "PODNAME" ]]; then
+                continue
+        fi
+        echo "$_f01,$_f02,$_f03,$_f04,$_f05,$_f06,$_f07,$_f08,$_COUNT" >> m2_${_file}.csv
+done
+exec 3>&-
+sort -o s1_${_file}.csv m2_${_file}.csv
+
+echo "PODNAME,EXECUTOR,COMMAND,FILENAME,FLAGS_I,FLAGS,MODE_I,MODE,COUNT" > /var/tmp/cappa_out/${POD}/${_file}.csv
+
+sed -i '1,$s/\(.*\)"\(.*\),\(.*\)"\(.*\)/\1"\2 \3"\4/' s1_${_file}.csv
+
+exec 3< s1_${_file}.csv
+read _f01 _f02 _f03 _f04 _f05 _f06 _f07 _f08 _COUNT <&3
+_l01="${_f01}"
+_l02="${_f02}"
+_l03="${_f03}"
+_l04="${_f04}"
+_l05="${_f05}"
+_l06="${_f06}"
+_l07="${_f07}"
+_l08="${_f08}"
+_CNT="${_COUNT}"
+
+while read _f01 _f02 _f03 _f04 _f05 _f06 _f07 _f08 _COUNT <&3
+do
+        if [[ "$_f01,$_f02,$_f03,$_f04,$_f05,$_f06,$_f07,$_f08" == "$_l01,$_l02,$_l03,$_l04,$_l05,$_l06,$_l07,$_l08" ]]; then
+                _CNT=$((_CNT + _COUNT))
+                continue
+        fi
+        echo "$_l01,$_l02,$_l03,$_l04,$_l05,$_l06,$_l07,$_l08,$_CNT" >> /var/tmp/cappa_out/${POD}/${_file}.csv
+        _l01="${_f01}"
+        _l02="${_f02}"
+        _l03="${_f03}"
+        _l04="${_f04}"
+        _l05="${_f05}"
+        _l06="${_f06}"
+        _l07="${_f07}"
+        _l08="${_f08}"
+        _CNT="${_COUNT}"
+done
+if [[ `wc -l /var/tmp/cappa_out/${POD}/${_file}.csv | cut -d " " -f 1` -gt 1 ]]; then
+	echo "$_l01,$_l02,$_l03,$_l04,$_l05,$_l06,$_l07,$_l08,$_CNT" >> /var/tmp/cappa_out/${POD}/${_file}.csv
+fi
+exec 3>&-
+
+return 0
+}
+
+
+
+runc-caps() {
+#####################################
+# Function to process runc-caps
+#####################################
+# Inputs:       none
+# Outputs:      none
+# Returns:      0
+#####################################
+logOut "DEBUG" "$FUNCNAME: running with ARGS:[$@]"
+_file="runc-caps"
+logOut "INFO" "Merging ${_file}"
+
+cd /var/tmp/cappa_merge/${POD}
+> m2_${_file}.csv
+
+IFS=","
+
+exec 3< /var/tmp/cappa_merge/${POD}/m1_${_file}.csv
+while read _f01 _f02 _f03 _f04 _f05 _f06 _f07 _COUNT <&3
+do
+        if [[ "$_f01" == "PODNAME" ]]; then
+                continue
+        fi
+        echo "$_f01,$_f02,$_f03,$_f04,$_f05,$_f06,$_f07,$_COUNT" >> m2_${_file}.csv
+done
+exec 3>&-
+sort -o s1_${_file}.csv m2_${_file}.csv
+
+echo "PODNAME,NETWORK_NS,PID_NS,VERSION,EFFECTIVE,PERMITTED,INHERITABLE,COUNT" > /var/tmp/cappa_out/${POD}/${_file}.csv
+
+exec 3< s1_${_file}.csv
+read _f01 _f02 _f03 _f04 _f05 _f06 _f07 _COUNT <&3
+_l01="${_f01}"
+_l02="${_f02}"
+_l03="${_f03}"
+_l04="${_f04}"
+_l05="${_f05}"
+_l06="${_f06}"
+_l07="${_f07}"
+_CNT="${_COUNT}"
+
+while read _f01 _f02 _f03 _f04 _f05 _f06 _f07 _COUNT <&3
+do
+        if [[ "$_f01,$_f02,$_f03,$_f04,$_f05,$_f06,$_f07" == "$_l01,$_l02,$_l03,$_l04,$_l05,$_l06,$_l07" ]]; then
+                _CNT=$((_CNT + _COUNT))
+                continue
+        fi
+        echo "$_l01,$_l02,$_l03,$_l04,$_l05,$_l06,$_l07,$_CNT" >> /var/tmp/cappa_out/${POD}/${_file}.csv
+        _l01="${_f01}"
+        _l02="${_f02}"
+        _l03="${_f03}"
+        _l04="${_f04}"
+        _l05="${_f05}"
+        _l06="${_f06}"
+        _l07="${_f07}"
+        _CNT="${_COUNT}"
+done
+if [[ `wc -l /var/tmp/cappa_out/${POD}/${_file}.csv | cut -d " " -f 1` -gt 1 ]]; then
+	echo "$_l01,$_l02,$_l03,$_l04,$_l05,$_l06,$_l07,$_CNT" >> /var/tmp/cappa_out/${POD}/${_file}.csv
+fi
+exec 3>&-
+
+return 0
+}
+
+sockets() {
+#####################################
+# Function to process sockets
+#####################################
+# Inputs:       none
+# Outputs:      none
+# Returns:      0
+#####################################
+logOut "DEBUG" "$FUNCNAME: running with ARGS:[$@]"
+_file="sockets"
+logOut "INFO" "Merging ${_file}"
+
+cd /var/tmp/cappa_merge/${POD}
+> m2_${_file}.csv
+
+IFS=","
+
+exec 3< /var/tmp/cappa_merge/${POD}/m1_${_file}.csv
+while read _f01 _f02 _f03 _COUNT <&3
+do
+        if [[ "$_f01" == "PODNAME" ]]; then
+                continue
+        fi
+        echo "$_f01,$_f02,$_f03,$_COUNT" >> m2_${_file}.csv
+done
+exec 3>&-
+sort -o s1_${_file}.csv m2_${_file}.csv
+
+echo "PODNAME,FAMILY,PROTOCOL,COUNT" > /var/tmp/cappa_out/${POD}/${_file}.csv
+
+exec 3< s1_${_file}.csv
+read _f01 _f02 _f03 _COUNT <&3
+_l01="${_f01}"
+_l02="${_f02}"
+_l03="${_f03}"
+_CNT="${_COUNT}"
+
+while read _f01 _f02 _f03 _COUNT <&3
+do
+        if [[ "$_f01,$_f02,$_f03" == "$_l01,$_l02,$_l03" ]]; then
+                _CNT=$((_CNT + _COUNT))
+                continue
+        fi
+        echo "$_l01,$_l02,$_l03,$_CNT" >> /var/tmp/cappa_out/${POD}/${_file}.csv
+        _l01="${_f01}"
+        _l02="${_f02}"
+        _l03="${_f03}"
+        _CNT="${_COUNT}"
+done
+if [[ `wc -l /var/tmp/cappa_out/${POD}/${_file}.csv | cut -d " " -f 1` -gt 1 ]]; then
+	echo "$_l01,$_l02,$_l03,$_CNT" >> /var/tmp/cappa_out/${POD}/${_file}.csv
+fi
+exec 3>&-
+
+return 0
+}
+
+Interesting-sockets() {
+#####################################
+# Function to process Interesting-sockets
+#####################################
+# Inputs:       none
+# Outputs:      none
+# Returns:      0
+#####################################
+logOut "DEBUG" "$FUNCNAME: running with ARGS:[$@]"
+_file="Interesting-sockets"
+logOut "INFO" "Merging ${_file}"
+
+cd /var/tmp/cappa_merge/${POD}
+> m2_${_file}.csv
+
+IFS=","
+
+exec 3< /var/tmp/cappa_merge/${POD}/m1_${_file}.csv
+while read _f01 _f02 _f03 _f04 _f05 _f06 _f07 _COUNT <&3
+do
+        if [[ "$_f01" == "PODNAME" ]]; then
+                continue
+        fi
+        echo "$_f01,$_f02,$_f03,$_f04,$_f05,$_f06,$_f07,$_COUNT" >> m2_${_file}.csv
+done
+exec 3>&-
+sort -o s1_${_file}.csv m2_${_file}.csv
+
+echo "PODNAME,EXECUTOR,COMM,FAMILY,TYPE,PROTOCOL,BIND_POINT,COUNT" > /var/tmp/cappa_out/${POD}/${_file}.csv
+
+exec 3< s1_${_file}.csv
+read _f01 _f02 _f03 _f04 _f05 _f06 _f07 _COUNT <&3
+_l01="${_f01}"
+_l02="${_f02}"
+_l03="${_f03}"
+_l04="${_f04}"
+_l05="${_f05}"
+_l06="${_f06}"
+_l07="${_f07}"
+_CNT="${_COUNT}"
+
+while read _f01 _f02 _f03 _f04 _f05 _f06 _f07 _COUNT <&3
+do
+        if [[ "$_f01,$_f02,$_f03,$_f04,$_f05,$_f06,$_f07" == "$_l01,$_l02,$_l03,$_l04,$_l05,$_l06,$_l07" ]]; then
+                _CNT=$((_CNT + _COUNT))
+                continue
+        fi
+        echo "$_l01,$_l02,$_l03,$_l04,$_l05,$_l06,$_l07,$_CNT" >> /var/tmp/cappa_out/${POD}/${_file}.csv
+        _l01="${_f01}"
+        _l02="${_f02}"
+        _l03="${_f03}"
+        _l04="${_f04}"
+        _l05="${_f05}"
+        _l06="${_f06}"
+        _l07="${_f07}"
+        _CNT="${_COUNT}"
+done
+if [[ `wc -l /var/tmp/cappa_out/${POD}/${_file}.csv | cut -d " " -f 1` -gt 1 ]]; then
+	echo "$_l01,$_l02,$_l03,$_l04,$_l05,$_l06,$_l07,$_CNT" >> /var/tmp/cappa_out/${POD}/${_file}.csv
+fi
+exec 3>&-
+
+return 0
+}
+
+
+root-process() {
+#####################################
+# Function to process root-process
+#####################################
+# Inputs:       none
+# Outputs:      none
+# Returns:      0
+#####################################
+logOut "DEBUG" "$FUNCNAME: running with ARGS:[$@]"
+_file="root-process"
+logOut "INFO" "Merging ${_file}"
+
+cd /var/tmp/cappa_merge/${POD}
+> m2_${_file}.csv
+
+IFS=","
+
+exec 3< /var/tmp/cappa_merge/${POD}/m1_${_file}.csv
+while read _f01 _f02 _f03 _f04 _f05 _f06 _f07 _COUNT <&3
+do
+        if [[ "$_f01" == "PODNAME" ]]; then
+                continue
+        fi
+        echo "$_f01,$_f02,$_f03,$_f04,$_f05,$_f06,$_f07,$_COUNT" >> m2_${_file}.csv
+done
+exec 3>&-
+sort -o s1_${_file}.csv m2_${_file}.csv
+
+echo "PODNAME,COMM,EXECUTOR,UID,EUID,GID,EGID,COUNT" > /var/tmp/cappa_out/${POD}/${_file}.csv
+
+exec 3< s1_${_file}.csv
+read _f01 _f02 _f03 _f04 _f05 _f06 _f07 _COUNT <&3
+_l01="${_f01}"
+_l02="${_f02}"
+_l03="${_f03}"
+_l04="${_f04}"
+_l05="${_f05}"
+_l06="${_f06}"
+_l07="${_f07}"
+_CNT="${_COUNT}"
+
+while read _f01 _f02 _f03 _f04 _f05 _f06 _f07 _COUNT <&3
+do
+        if [[ "$_f01,$_f02,$_f03,$_f04,$_f05,$_f06,$_f07" == "$_l01,$_l02,$_l03,$_l04,$_l05,$_l06,$_l07" ]]; then
+                _CNT=$((_CNT + _COUNT))
+                continue
+        fi
+        echo "$_l01,$_l02,$_l03,$_l04,$_l05,$_l06,$_l07,$_CNT" >> /var/tmp/cappa_out/${POD}/${_file}.csv
+        _l01="${_f01}"
+        _l02="${_f02}"
+        _l03="${_f03}"
+        _l04="${_f04}"
+        _l05="${_f05}"
+        _l06="${_f06}"
+        _l07="${_f07}"
+        _CNT="${_COUNT}"
+done
+if [[ `wc -l /var/tmp/cappa_out/${POD}/${_file}.csv | cut -d " " -f 1` -gt 1 ]]; then
+	echo "$_l01,$_l02,$_l03,$_l04,$_l05,$_l06,$_l07,$_CNT" >> /var/tmp/cappa_out/${POD}/${_file}.csv
+fi
+exec 3>&-
+
+return 0
+}
+
+
+
+
+runc-hook() {
+#####################################
+# Function to process runc-hook
+#####################################
+# Inputs:       none
+# Outputs:      none
+# Returns:      0
+#####################################
+logOut "DEBUG" "$FUNCNAME: running with ARGS:[$@]"
+_file="runc-hook"
+logOut "INFO" "Merging ${_file}"
+
+cd /var/tmp/cappa_merge/${POD}
+> m2_${_file}.csv
+
+IFS=","
+
+exec 3< /var/tmp/cappa_merge/${POD}/m1_${_file}.csv
+while read _f01 _f02 _f03 _f04 _f05 _f06 _f07 _f08 <&3
+do
+        if [[ "$_f07" == "NODE_NAME" ]]; then
+                continue
+        fi
+        echo "$_f01,$_f02,$_f03,$_f04,$_f05,$_f06,$_f07,$_f08" >> m2_${_file}.csv
+done
+exec 3>&-
+sort -o s1_${_file}.csv m2_${_file}.csv
+
+echo "ID,NETWORK_NS,PID_NS,GEN,UID,COMM,NODE_NAME,EXECUTOR" > /var/tmp/cappa_out/${POD}/${_file}.csv
+cat s1_${_file}.csv >> /var/tmp/cappa_out/${POD}/${_file}.csv
+
+return 0
+}
+
+
+
+syscalls32() {
+#####################################
+# Function to process syscalls32
+#####################################
+# Inputs:       none
+# Outputs:      none
+# Returns:      0
+#####################################
+logOut "DEBUG" "$FUNCNAME: running with ARGS:[$@]"
+_file="syscalls32"
+logOut "INFO" "Merging ${_file}"
+
+cd /var/tmp/cappa_merge/${POD}
+> m2_${_file}.csv
+
+IFS=","
+
+exec 3< /var/tmp/cappa_merge/${POD}/m1_${_file}.csv
+while read _f01 _f02 _f03 _f04 _f05 _f06 _f07 _f08 <&3
+do
+        if [[ "$_f07" == "NODE_NAME" ]]; then
+                continue
+        fi
+        echo "$_f01,$_f02,$_f03,$_f04,$_f05,$_f06,$_f07,$_f08" >> m2_${_file}.csv
+done
+exec 3>&-
+sort -o s1_${_file}.csv m2_${_file}.csv
+
+echo "ID,NETWORK_NS,PID_NS,GEN,UID,COMM,NODE_NAME,EXECUTOR" > /var/tmp/cappa_out/${POD}/${_file}.csv
+cat s1_${_file}.csv >> /var/tmp/cappa_out/${POD}/${_file}.csv
+
+return 0
+}
+
+
+
+#############
+#
+#       MAIN
+#
+#############
+
+while getopts ":d:c:h" opt; do
+        case $opt in
+        d)              #set the database directory to use
+                        DB="$OPTARG"
+                        ;;
+        c)              #set the pod name to query on
+                        POD="$OPTARG"
+                        ;;
+        h)              # Print help and exitOut OK
+                        usage
+                        exitOut 0
+                        ;;
+        \?)             # Hint to run usage
+                        usage
+                        exitOut 1 "Invalid option \"-$OPTARG\" supplied."
+                        ;;
+        :)              #capture options with missing args
+                        exitOut 1 "Missing argument for \"-$OPTARG\"\n\t\t\tRun \"${SCRIPT_NAME} -h\" for help\n"
+                        ;;
+        esac
+done
+
+# Should be no extra stuff on the command line
+shift $((${OPTIND} - 1))
+[[ $# -ne 0 ]] && exitOut 1 "Invalid command line option detected:[$@]\n\n$(usage)"
+
+[[ -d "${DB}" ]] || exitOut 1 "Database directory $DB does not exist.\n\n$(usage)"
+
+file ${DB}/*db | grep SQLite > /dev/null || exitOut 1 "Database directory $DB does not contain any SQLite databases"
+
+[[ -z  "${POD}" ]] && exitOut 1 "POD name missing.\n\n$(usage)"
+[[ -z  "${DB}" ]] && exitOut 1 "DB name missing.\n\n$(usage)"
+
+
+
+for xx in `ls ${DB}/*db`
+do
+	logOut ECHO  "database is ${xx}"
+	./cappa_extract.bsh -d ${xx} -c ${POD}
+	cat /var/tmp/cappa_out/${POD}/Interesting-sockets.csv >> /var/tmp/cappa_out/${POD}/merge_Interesting-sockets.csv
+	cat /var/tmp/cappa_out/${POD}/all-files.csv >> /var/tmp/cappa_out/${POD}/merge_all-files.csv
+	cat /var/tmp/cappa_out/${POD}/all-syscalls.csv >> /var/tmp/cappa_out/${POD}/merge_all-syscalls.csv
+	cat /var/tmp/cappa_out/${POD}/granted-capabilities.csv >> /var/tmp/cappa_out/${POD}/merge_granted-capabilities.csv
+	cat /var/tmp/cappa_out/${POD}/granted-stacks.csv >> /var/tmp/cappa_out/${POD}/merge_granted-stacks.csv
+	cat /var/tmp/cappa_out/${POD}/non-whitelisted-syscalls.csv >> /var/tmp/cappa_out/${POD}/merge_non-whitelisted-syscalls.csv
+	cat /var/tmp/cappa_out/${POD}/root-process.csv >> /var/tmp/cappa_out/${POD}/merge_root-process.csv
+	cat /var/tmp/cappa_out/${POD}/runc-caps.csv >> /var/tmp/cappa_out/${POD}/merge_runc-caps.csv
+	cat /var/tmp/cappa_out/${POD}/runc-hook.csv >> /var/tmp/cappa_out/${POD}/merge_runc-hook.csv
+	cat /var/tmp/cappa_out/${POD}/sockets.csv >> /var/tmp/cappa_out/${POD}/merge_sockets.csv
+	cat /var/tmp/cappa_out/${POD}/syscalls32.csv >> /var/tmp/cappa_out/${POD}/merge_syscalls32.csv
+done
+mv /var/tmp/cappa_out/${POD}/merge_Interesting-sockets.csv /var/tmp/cappa_merge/${POD}/m1_Interesting-sockets.csv
+mv /var/tmp/cappa_out/${POD}/merge_all-files.csv /var/tmp/cappa_merge/${POD}/m1_all-files.csv
+mv /var/tmp/cappa_out/${POD}/merge_all-syscalls.csv /var/tmp/cappa_merge/${POD}/m1_all-syscalls.csv
+mv /var/tmp/cappa_out/${POD}/merge_granted-capabilities.csv /var/tmp/cappa_merge/${POD}/m1_granted-capabilities.csv
+mv /var/tmp/cappa_out/${POD}/merge_granted-stacks.csv /var/tmp/cappa_merge/${POD}/m1_granted-stacks.csv
+mv /var/tmp/cappa_out/${POD}/merge_non-whitelisted-syscalls.csv /var/tmp/cappa_merge/${POD}/m1_non-whitelisted-syscalls.csv
+mv /var/tmp/cappa_out/${POD}/merge_root-process.csv /var/tmp/cappa_merge/${POD}/m1_root-process.csv
+mv /var/tmp/cappa_out/${POD}/merge_runc-caps.csv /var/tmp/cappa_merge/${POD}/m1_runc-caps.csv
+mv /var/tmp/cappa_out/${POD}/merge_runc-hook.csv /var/tmp/cappa_merge/${POD}/m1_runc-hook.csv
+mv /var/tmp/cappa_out/${POD}/merge_sockets.csv /var/tmp/cappa_merge${POD}/m1_sockets.csv
+mv /var/tmp/cappa_out/${POD}/merge_syscalls32.csv /var/tmp/cappa_merge/${POD}/m1_syscalls32.csv
+
+
+granted-capabilities || exitOut 1 "Error in granted-capabilities function"
+granted-stacks || exitOut 1 "Error in granted-stacks function"
+all-syscalls || exitOut 1 "Error in all-syscalls function"
+non-whitelisted-syscalls || exitOut 1 "Error in non-whitelisted-syscalls function"
+all-files || exitOut 1 "Error in all-files function"
+runc-caps || exitOut 1 "Error in runc-caps function"
+runc-hook || exitOut 1 "Error in runc-hook function"
+syscalls32 || exitOut 1 "Error in syscalls32 function"
+sockets || exitOut 1 "Error in sockets function"
+Interesting-sockets || exitOut 1 "Error in Interesting-sockets function"
+root-process || exitOut 1 "Error in root-process function"
+
+logOut "INFO" "cappa_merge Complete"
+exitOut 0 "Finished"

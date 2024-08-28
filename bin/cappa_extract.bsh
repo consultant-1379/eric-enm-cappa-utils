@@ -1,0 +1,522 @@
+#!/bin/bash
+# cappa database extraction script
+# ********************************************************************
+# Ericsson Radio Systems AB                                     SCRIPT
+# ********************************************************************
+#
+#
+# (c) Ericsson Radio Systems AB 2021 - All rights reserved.
+#
+# The copyright to the computer program(s) herein is the property
+# of Ericsson Radio Systems AB, Sweden. The programs may be used
+# and/or copied only with the written permission from Ericsson Radio
+# Systems AB or in accordance with the terms and conditions stipulated
+# in the agreement/contract under which the program(s) have been
+# supplied.
+#
+# ********************************************************************
+# Name    : cappa_extract.bsh
+# Date    : 13/04/2021
+# Revision: A
+# Purpose : Extract data from a cappa produced database into csv files
+#
+#
+# Version Information:
+#       Version Who             Date            Comment
+#       0.1     emihaye         13/04/2021      Initial draft
+#
+# Usage   : "cappa_extract.bsh -h" to give usage
+#
+# ********************************************************************
+
+
+LOG=/var/tmp/cappa_extract.log
+
+datestamp() {
+#####################################
+# Function to output a formatted date
+#####################################
+# Inputs:       $1 [1|2|3] (optional)
+#                               for 4 different output formats
+# Outputs:      none
+# Returns:      0 success
+#####################################
+[[ $1 -eq 1 ]] && date +%H:%M:%S
+[[ $1 -eq 2 ]] && date +%d-%m-%Y_%H-%M-%S
+[[ $1 -eq 3 ]] && date +%Y-%m-%d
+[[ -z $1 ]] && date
+
+return 0
+}
+
+
+logOut() {
+#####################################
+# Function to send formatted output to STDOUT and $LOG
+#####################################
+# Inputs:       $1 [DEBUG|WARN|ERROR|INFO|ECHO]
+#                               for the type of formatting
+#                       $2 <string>
+#                               for the message
+# Outputs:      none
+# Returns:      0 success
+#                       1 incorrect usage
+#####################################
+[[ "$1" == "DEBUG" ]] && {
+        [[ "$DEBUG" == "y" ]] && echo -e $(datestamp 1)"   [DEBUG]\t${@:2}" |$TEE -a $LOG 2>&1
+        return 0
+        }
+[[ "$1" == "WARN" ]] && {
+        echo -e $(datestamp 1)"   \033[1;30;33m[WARNING]\033[0m   ${@:2}"
+        echo -e $(datestamp 1)"   [WARNING]   ${@:2}" >> $LOG 2>&1
+        return 0
+        }
+[[ "$1" == "ERROR" ]] && {
+        echo -e  $(datestamp 1)"   \033[1;30;31m[ERROR]\033[0m   ${@:2}"
+        echo -e  $(datestamp 1)"   [ERROR]   ${@:2}" >> $LOG 2>&1
+        return 0
+        }
+[[ "$1" == "INFO" ]] && {
+        echo -e $(datestamp 1)"   \033[1;30;32m[INFO]\033[0m   ${@:2}"
+        echo -e $(datestamp 1)"   [INFO]   ${@:2}" >> $LOG 2>&1
+        return 0
+        }
+[[ "$1" == "ECHO" ]] && {
+        #echo -e "${@:2}" |$TEE -a $LOG 2>&1
+        return 0
+        }
+echo -e "[WARNING: bad $FUNCNAME call]\t$@" |$TEE -a $LOG 2>&1
+return 1
+}
+
+exitOut () {
+#####################################
+# Function to exit the script with a code and message
+#####################################
+# Inputs:       $1 <integer>
+#                               for the exit code to be used
+#                       $2 <string>
+#                               for the exit message
+# Outputs:      none
+# Returns:      exit
+#####################################
+
+local l_exitCode="${1:-0}"
+local l_exitMsg="${@:2}"
+
+
+if      [[ $l_exitCode -ne 0 ]]; then
+        	logOut "ERROR" "$l_exitMsg"
+else
+        	logOut "ECHO" "$l_exitMsg"
+fi
+
+exit $l_exitCode
+
+}
+
+
+usage() {
+#####################################
+# Function to output usage help
+#####################################
+# Inputs:       none
+# Outputs:      none
+# Returns:      0
+#####################################
+logOut "DEBUG" "$FUNCNAME: running with ARGS:[$@]"
+
+cat << EOF
+
+Usage:  cappa_extract.bsh -d <database name> -c <POD name> [-h]
+
+        Where :
+                -d Name of database file, including path if not in same directory
+		-c name (or start of name) of a POD to report on (use all if all pods required)
+                -h      Print help (this message).
+
+        Example:
+                cappa_extract.bsh -d /root/report_db -c cmserv
+                cappa_extract.bsh -d /tmp/mystuff.db -c all
+
+EOF
+
+return 0
+
+}
+
+
+granted-capabilities() {
+#####################################
+#Function to check produce CSV file
+#for List granted/used caps
+#####################################
+# Inputs:       $DB, $POD
+# Outputs:      none
+# Returns:      none
+#####################################
+logOut "DEBUG" "$FUNCNAME: running with ARGS:[$@]"
+l_db=$1
+l_pod=$2
+
+sqlite3 -csv ${l_db} "
+SELECT r.NODE_NAME as PODNAME, ca.COMMAND, ca.EXECUTOR, ca.CAP_ID, c.NAME AS CAP, ca.SYSCALL_NUM AS SYSCALL_ID, ca.IA32,
+s.NAME AS SYSCALL_NAME, ca.RETVAL, ca.COUNT, ca.CRED_OVERR_ACTIVE, ca.IN_CONTAINER_CAPS
+FROM CAPS_ASKED_FOR ca
+LEFT JOIN (SELECT * FROM RUNC_HOOK_INFO GROUP BY NETWORK_NS, PID_NS, GEN) AS r ON r.NETWORK_NS = ca.NETWORK_NS AND r.PID_NS = ca.PID_NS AND r.GEN = ca.GEN
+LEFT JOIN CAPABILITIES c ON ca.CAP_ID = c.CAP_ID
+LEFT JOIN
+    (SELECT 1 AS IA32, SYSCALL_NUM, NAME from SYSCALL32
+     UNION
+     SELECT 0 AS IA32, SYSCALL_NUM, NAME from SYSCALL) AS s
+    ON s.SYSCALL_NUM = ca.SYSCALL_NUM AND s.IA32 = ca.IA32
+WHERE r.NODE_NAME LIKE '${l_pod}' AND ca.CRED_OVERR_ACTIVE = 0 AND ca.RETVAL = 0 ORDER BY r.NODE_NAME, ca.EXECUTOR, ca.CAP_ID
+;" >> /var/tmp/cappa_out/${l_pod}/granted-capabilities.csv
+}
+
+granted-stacks() {
+#####################################
+#Function to check produce CSV file
+#for List granted/used caps
+#####################################
+# Inputs:       $DB, $POD
+# Outputs:      none
+# Returns:      none
+#####################################
+logOut "DEBUG" "$FUNCNAME: running with ARGS:[$@]"
+l_db=$1
+l_pod=$2
+
+sqlite3 -csv ${l_db} "
+SELECT
+  ca.ID as CA_ID, r.NODE_NAME as PODNAME, ca.COMMAND, ca.EXECUTOR, ca.CAP_ID, c.NAME AS CAP, ca.SYSCALL_NUM AS SYSCALL_ID, ca.IA32,
+  s.NAME AS SYSCALL_NAME, ca.COUNT, ca.IN_CONTAINER_CAPS,
+  st.ADDRESS, st.SYMBOL
+FROM CAPS_ASKED_FOR ca,
+    (SELECT ID, ADDRESS, SYMBOL, KERNEL_STACK_ID, -1 AS USER_STACK_ID, 1 AS sortorder
+     FROM KERNEL_STACK
+     UNION
+     SELECT ID, ADDRESS, SYMBOL, -1 AS KERNEL_STACK_ID, USER_STACK_ID, 2 AS sortorder
+     FROM USER_STACK) st
+LEFT JOIN (SELECT * FROM RUNC_HOOK_INFO GROUP BY NETWORK_NS, PID_NS, GEN) AS r ON r.NETWORK_NS = ca.NETWORK_NS AND r.PID_NS = ca.PID_NS AND r.GEN = ca.GEN
+LEFT JOIN CAPABILITIES c ON ca.CAP_ID = c.CAP_ID
+LEFT JOIN
+    (SELECT 1 AS IA32, SYSCALL_NUM, NAME from SYSCALL32
+     UNION
+     SELECT 0 AS IA32, SYSCALL_NUM, NAME from SYSCALL) AS s
+    ON s.SYSCALL_NUM = ca.SYSCALL_NUM AND s.IA32 = ca.IA32
+WHERE
+  r.NODE_NAME LIKE '${l_pod}' AND ca.CRED_OVERR_ACTIVE = 0 AND ca.RETVAL = 0 AND
+  (st.KERNEL_STACK_ID = ca.KERNEL_STACK_ID OR st.USER_STACK_ID = ca.USER_STACK_ID)
+ORDER BY r.NODE_NAME, ca.EXECUTOR, ca.ID, ca.CAP_ID, sortorder, st.ID
+;" >> /var/tmp/cappa_out/${l_pod}/granted-stacks.csv
+}
+
+all-syscalls() {
+#####################################
+#Function to check produce CSV file
+#for List all syscalls
+#####################################
+# Inputs:       $DB, $POD
+# Outputs:      none
+# Returns:      none
+#####################################
+logOut "DEBUG" "$FUNCNAME: running with ARGS:[$@]"
+l_db=$1
+l_pod=$2
+
+sqlite3 -csv ${l_db} "
+SELECT
+  r.NODE_NAME as PODNAME, sa.EXECUTOR, sa.SYSCALL_NUM, sa.IA32, s.NAME AS SYSCALL_NAME,
+  sa.ERRNO, e.ENAME as ERRNO_NAME, sa.COUNT
+FROM ALL_SYSCALLS sa
+LEFT JOIN (SELECT * FROM RUNC_HOOK_INFO GROUP BY NETWORK_NS, PID_NS, GEN) AS r ON r.NETWORK_NS = sa.NETWORK_NS AND r.PID_NS = sa.PID_NS AND r.GEN = sa.GEN
+LEFT JOIN
+    (SELECT 1 AS IA32, SYSCALL_NUM, NAME from SYSCALL32
+     UNION
+     SELECT 0 AS IA32, SYSCALL_NUM, NAME from SYSCALL) AS s
+    ON s.SYSCALL_NUM = sa.SYSCALL_NUM AND s.IA32 = sa.IA32
+LEFT JOIN ERRNO e ON sa.ERRNO = e.ERRNO
+WHERE r.NODE_NAME LIKE '${l_pod}'
+ORDER BY r.NODE_NAME, s.SYSCALL_NUM, e.ERRNO
+;" >> /var/tmp/cappa_out/${l_pod}/all-syscalls.csv
+}
+
+non-whitelisted-syscalls() {
+#####################################
+#Function to check produce CSV file
+#for List non-whitelisted syscalls
+#####################################
+# Inputs:       $DB, $POD
+# Outputs:      none
+# Returns:      none
+#####################################
+logOut "DEBUG" "$FUNCNAME: running with ARGS:[$@]"
+l_db=$1
+l_pod=$2
+
+sqlite3 -csv ${l_db} "
+SELECT
+  r.NODE_NAME as PODNAME, sa.EXECUTOR, sa.COMM, sa.SYSCALL_NUM, s.NAME AS SYSCALL_NAME, s.IA32,
+  sa.ERRNO, e.ENAME as ERRNO_NAME, sa.COUNT
+FROM NON_WHITELISTED_SYSCALLS sa
+LEFT JOIN (SELECT * FROM RUNC_HOOK_INFO GROUP BY NETWORK_NS, PID_NS, GEN) AS r ON r.NETWORK_NS = sa.NETWORK_NS AND r.PID_NS = sa.PID_NS AND r.GEN = sa.GEN
+LEFT JOIN
+    (SELECT 1 AS IA32, SYSCALL_NUM, NAME from SYSCALL32
+     UNION
+     SELECT 0 AS IA32, SYSCALL_NUM, NAME from SYSCALL) AS s
+    ON s.SYSCALL_NUM = sa.SYSCALL_NUM AND s.IA32 = sa.IA32
+LEFT JOIN ERRNO e ON sa.ERRNO = e.ERRNO
+WHERE r.NODE_NAME LIKE '${l_pod}'
+ORDER BY r.NODE_NAME, s.SYSCALL_NUM, e.ERRNO
+;" >> /var/tmp/cappa_out/${l_pod}/non-whitelisted-syscalls.csv
+}
+
+all-files() {
+#####################################
+#Function to check produce CSV file
+#for List all files
+#####################################
+# Inputs:       $DB, $POD
+# Outputs:      none
+# Returns:      none
+#####################################
+logOut "DEBUG" "$FUNCNAME: running with ARGS:[$@]"
+l_db=$1
+l_pod=$2
+
+sqlite3 -csv ${l_db} "
+SELECT
+  r.NODE_NAME as PODNAME, if.EXECUTOR, if.COMMAND, if.FILENAME, if.FLAGS_I, if.FLAGS, if.MODE_I, if.MODE, if.COUNT
+FROM INTERESTING_FILES if
+LEFT JOIN (SELECT * FROM RUNC_HOOK_INFO GROUP BY NETWORK_NS, PID_NS, GEN) AS r ON r.NETWORK_NS = if.NETWORK_NS AND r.PID_NS = if.PID_NS AND r.GEN = if.GEN
+WHERE r.NODE_NAME LIKE '${l_pod}'
+ORDER BY r.NODE_NAME, if.FILENAME, if.EXECUTOR
+;" >> /var/tmp/cappa_out/${l_pod}/all-files.csv
+}
+
+runc-caps() {
+#####################################
+#Function to check produce CSV file
+#for RUNC_CAPS_FOR_CONTAINER
+#####################################
+# Inputs:       $DB, $POD
+# Outputs:      none
+# Returns:      none
+#####################################
+logOut "DEBUG" "$FUNCNAME: running with ARGS:[$@]"
+l_db=$1
+l_pod=$2
+
+sqlite3 -csv ${l_db} "
+SELECT
+  r.NODE_NAME as PODNAME, rc.NETWORK_NS, rc.PID_NS, rc.VERSION, rc.EFFECTIVE, rc.PERMITTED, rc.INHERITABLE
+FROM RUNC_CAPS_FOR_CONTAINER rc
+LEFT JOIN (SELECT * FROM RUNC_HOOK_INFO GROUP BY NETWORK_NS, PID_NS, GEN) AS r ON r.NETWORK_NS = rc.NETWORK_NS AND r.PID_NS = rc.PID_NS AND r.GEN = rc.GEN
+WHERE r.NODE_NAME LIKE '${l_pod}'
+ORDER BY r.NODE_NAME
+;" >> /var/tmp/cappa_out/${l_pod}/runc-caps.csv
+}
+
+runc-hook() {
+#####################################
+#Function to check produce CSV file
+#for RUNC_HOOK_INFO
+#####################################
+# Inputs:       $DB, $POD
+# Outputs:      none
+# Returns:      none
+#####################################
+logOut "DEBUG" "$FUNCNAME: running with ARGS:[$@]"
+l_db=$1
+l_pod=$2
+
+sqlite3 -csv ${l_db} "
+SELECT * from RUNC_HOOK_INFO
+WHERE NODE_NAME LIKE '${l_pod}'
+ORDER BY NODE_NAME
+;" >> /var/tmp/cappa_out/${l_pod}/runc-hook.csv
+}
+
+syscalls32() {
+#####################################
+#Function to check produce CSV file
+#for Syscalls 32bit
+#####################################
+# Inputs:       $DB, $POD
+# Outputs:      none
+# Returns:      none
+#####################################
+logOut "DEBUG" "$FUNCNAME: running with ARGS:[$@]"
+l_db=$1
+l_pod=$2
+
+sqlite3 -csv ${l_db} "
+SELECT
+  r.NODE_NAME as PODNAME, sa.EXECUTOR, sa.SYSCALL_NUM, sa.IA32, s.NAME AS SYSCALL_NAME,
+  sa.ERRNO, e.ENAME as ERRNO_NAME, sa.COUNT
+FROM ALL_SYSCALLS sa
+LEFT JOIN (SELECT * FROM RUNC_HOOK_INFO GROUP BY NETWORK_NS, PID_NS, GEN) AS r ON r.NETWORK_NS = sa.NETWORK_NS AND r.PID_NS = sa.PID_NS AND r.GEN = sa.GEN
+LEFT JOIN SYSCALL32 s ON sa.SYSCALL_NUM = s.SYSCALL_NUM
+LEFT JOIN ERRNO e ON sa.ERRNO = e.ERRNO
+WHERE sa.IA32='1' AND r.NODE_NAME LIKE '${l_pod}'
+ORDER BY r.NODE_NAME, s.SYSCALL_NUM, e.ERRNO
+;" >> /var/tmp/cappa_out/${l_pod}/syscalls32.csv
+}
+
+sockets() {
+#####################################
+#Function to check produce CSV file
+#for Syscalls 32bit
+#####################################
+# Inputs:       $DB, $POD
+# Outputs:      none
+# Returns:      none
+#####################################
+logOut "DEBUG" "$FUNCNAME: running with ARGS:[$@]"
+l_db=$1
+l_pod=$2
+
+sqlite3 -csv ${l_db} "
+SELECT
+  r.NODE_NAME AS PODNAME,
+  sf.NAME AS FAMILY, sp.NAME AS PROTOCOL,
+  als.COUNT
+FROM ALL_SOCKETS als
+LEFT JOIN (SELECT * FROM RUNC_HOOK_INFO GROUP BY NETWORK_NS, PID_NS, GEN) AS r ON r.NETWORK_NS = als.NETWORK_NS AND r.PID_NS = als.PID_NS AND r.GEN = als.GEN
+LEFT JOIN SOCKET_FAMILY   sf ON als.FAMILY = sf.FAMILY
+LEFT JOIN SOCKET_PROTOCOL sp ON als.PROTOCOL = sp.PROTOCOL
+WHERE r.NODE_NAME LIKE '${l_pod}'
+ORDER BY r.NODE_NAME, als.FAMILY, als.PROTOCOL
+;" >> /var/tmp/cappa_out/${l_pod}/sockets.csv
+}
+
+Interesting-sockets() {
+#####################################
+#Function to check produce CSV file
+#for Syscalls 32bit
+#####################################
+# Inputs:       $DB, $POD
+# Outputs:      none
+# Returns:      none
+#####################################
+logOut "DEBUG" "$FUNCNAME: running with ARGS:[$@]"
+l_db=$1
+l_pod=$2
+
+sqlite3 -csv ${l_db} "
+SELECT
+  r.NODE_NAME AS PODNAME, isd.EXECUTOR, isd.COMM,
+  sf.NAME AS FAMILY, st.NAME AS TYPE, sp.NAME AS PROTOCOL, isd.BIND_POINT,
+  isd.COUNT
+FROM INTERESTING_SOCKETS_DETAILS isd
+LEFT JOIN (SELECT * FROM RUNC_HOOK_INFO GROUP BY NETWORK_NS, PID_NS, GEN) AS r ON r.NETWORK_NS = isd.NETWORK_NS AND r.PID_NS = isd.PID_NS AND r.GEN = isd.GEN
+LEFT JOIN SOCKET_FAMILY   sf ON isd.FAMILY = sf.FAMILY
+LEFT JOIN SOCKET_PROTOCOL sp ON isd.PROTOCOL = sp.PROTOCOL
+LEFT JOIN SOCKET_TYPE     st ON isd.TYPE = st.TYPE
+WHERE r.NODE_NAME LIKE '${l_pod}'
+ORDER BY r.NODE_NAME, isd.FAMILY, isd.TYPE, isd.PROTOCOL
+;" >> /var/tmp/cappa_out/${l_pod}/Interesting-sockets.csv
+}
+
+root-process() {
+#####################################
+#Function to check produce CSV file
+#for Syscalls 32bit
+#####################################
+# Inputs:       $DB, $POD
+# Outputs:      none
+# Returns:      none
+#####################################
+logOut "DEBUG" "$FUNCNAME: running with ARGS:[$@]"
+l_db=$1
+l_pod=$2
+
+sqlite3 -csv ${l_db} "
+SELECT
+  r.NODE_NAME as PODNAME, pas.COMM, pas.EXECUTOR, pas.UID, pas.EUID, pas.GID, pas.EGID, pas.COUNT
+FROM PROCESSES_RUN_AS_ROOT pas
+LEFT JOIN (SELECT * FROM RUNC_HOOK_INFO GROUP BY NETWORK_NS, PID_NS, GEN) AS r ON r.NETWORK_NS = pas.NETWORK_NS AND r.PID_NS = pas.PID_NS AND r.GEN = pas.GEN
+WHERE r.NODE_NAME LIKE '${l_pod}'
+ORDER BY r.NODE_NAME, pas.COMM, pas.EXECUTOR
+;" >> /var/tmp/cappa_out/${l_pod}/root-process.csv
+}
+
+
+
+
+
+
+#############
+#
+#       MAIN
+#
+#############
+
+logOut "INFO" "cappa_extract Starting"
+
+while getopts ":d:c:h" opt; do
+        case $opt in
+       	d)              #set the database to use
+                        DB="$OPTARG"
+                        ;;
+        c)              #set the pod name to query on
+                        POD="$OPTARG"
+                        ;;
+        h)      	# Print help and exitOut OK
+                	usage
+                	exitOut 0
+                	;;
+        \?)      	# Hint to run usage
+                	usage
+                	exitOut 1 "Invalid option \"-$OPTARG\" supplied."
+                	;;
+        :)              #capture options with missing args
+                        exitOut 1 "Missing argument for \"-$OPTARG\"\n\t\t\tRun \"${SCRIPT_NAME} -h\" for help\n"
+                        ;;
+        esac
+done
+
+# Should be no extra stuff on the command line
+shift $((${OPTIND} - 1))
+[[ $# -ne 0 ]] && exitOut 1 "Invalid command line option detected:[$@]\n\n$(usage)"
+
+[[ -f "${DB}" ]] || exitOut 1 "Database $DB does not exist.\n\n$(usage)"
+
+[[ -z  "${POD}" ]] && exitOut 1 "POD name missing.\n\n$(usage)"
+[[ -z  "${DB}" ]] && exitOut 1 "DB name missing.\n\n$(usage)"
+
+which sqlite3 >/dev/null 2>&1 ||  exitOut 1 "sqlite3 not installed or not in path"
+
+mkdir -p /var/tmp/cappa_out/ > /dev/null 2>&1
+mkdir -p /var/tmp/cappa_out/${POD} > /dev/null 2>&1
+
+
+echo "PODNAME,COMMAND,EXECUTOR,CAP_ID,CAP,SYSCALL_ID,IA32,SYSCALL_NAME,RETVAL,COUNT,CRED_OVERR_ACTIVE,IN_CONTAINER_CAPS" > /var/tmp/cappa_out/${POD}/granted-capabilities.csv
+echo "CA_ID,PODNAME,COMMAND,EXECUTOR,CAP_ID,CAP,SYSCALL_ID,IA32,SYSCALL_NAME,COUNT,IN_CONTAINER_CAPS,ADDRESS,SYMBOL" > /var/tmp/cappa_out/${POD}/granted-stacks.csv
+echo "PODNAME,EXECUTOR,SYSCALL_NUM,IA32,SYSCALL_NAME,ERRNO,ERRNO_NAME,COUNT" > /var/tmp/cappa_out/${POD}/all-syscalls.csv
+echo "PODNAME,EXECUTOR,COMM,SYSCALL_NUM,SYSCALL_NAME,IA32,ERRNO,ERRNO_NAME,COUNT" > /var/tmp/cappa_out/${POD}/non-whitelisted-syscalls.csv
+echo "PODNAME,EXECUTOR,COMMAND,FILENAME,FLAGS_I,FLAGS,MODE_I,MODE,COUNT" > /var/tmp/cappa_out/${POD}/all-files.csv
+echo "PODNAME,NETWORK_NS,PID_NS,VERSION,EFFECTIVE,PERMITTED,INHERITABLE,COUNT" > /var/tmp/cappa_out/${POD}/runc-caps.csv
+echo "ID,NETWORK_NS,PID_NS,GEN,UID,COMM,NODE_NAME,EXECUTOR" > /var/tmp/cappa_out/${POD}/runc-hook.csv
+echo "ID,NETWORK_NS,PID_NS,GEN,UID,COMM,NODE_NAME,EXECUTOR" > /var/tmp/cappa_out/${POD}/syscalls32.csv
+echo "PODNAME,FAMILY,PROTOCOL,COUNT" > /var/tmp/cappa_out/${POD}/sockets.csv
+echo "PODNAME,EXECUTOR,COMM,FAMILY,TYPE,PROTOCOL,BIND_POINT,COUNT" > /var/tmp/cappa_out/${POD}/Interesting-sockets.csv
+echo "PODNAME,COMM,EXECUTOR,UID,EUID,GID,EGID,COUNT" > /var/tmp/cappa_out/${POD}/root-process.csv
+
+
+granted-capabilities ${DB} ${POD} || exitOut 1 "Error in granted-capabilities function"
+granted-stacks ${DB} ${POD} || exitOut 1 "Error in granted-stacks function"
+all-syscalls ${DB} ${POD} || exitOut 1 "Error in all-syscalls function"
+non-whitelisted-syscalls ${DB} ${POD} || exitOut 1 "Error in non-whitelisted-syscalls function"
+all-files ${DB} ${POD} || exitOut 1 "Error in all-files function"
+runc-caps ${DB} ${POD} || exitOut 1 "Error in runc-caps function"
+runc-hook ${DB} ${POD} || exitOut 1 "Error in runc-hook function"
+syscalls32 ${DB} ${POD} || exitOut 1 "Error in syscalls32 function"
+sockets ${DB} ${POD} || exitOut 1 "Error in sockets function"
+Interesting-sockets ${DB} ${POD} || exitOut 1 "Error in Interesting-sockets function"
+root-process ${DB} ${POD} || exitOut 1 "Error in root-process function"
+
+logOut "INFO" "cappa_extract Complete"
+exitOut 0 "Finished"
+

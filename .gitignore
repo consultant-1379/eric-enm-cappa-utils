@@ -1,0 +1,9 @@
+*.pyc
+.idea/
+output
+*.admin.conf
+*.director.pem
+base64/*
+*.csv
+*.log
+*.ini

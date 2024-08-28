@@ -1,0 +1,406 @@
+#!/bin/bash
+# cappa capabilities exemption
+# ********************************************************************
+# Ericsson Radio Systems AB                                     SCRIPT
+# ********************************************************************
+#
+#
+# (c) Ericsson Radio Systems AB 2021 - All rights reserved.
+#
+# The copyright to the computer program(s) herein is the property
+# of Ericsson Radio Systems AB, Sweden. The programs may be used
+# and/or copied only with the written permission from Ericsson Radio
+# Systems AB or in accordance with the terms and conditions stipulated
+# in the agreement/contract under which the program(s) have been
+# supplied.
+#
+# ********************************************************************
+# Name    : cappa_exempt.bsh
+# Date    : 17/06/2021
+# Revision: A
+# Purpose : Extract capabilities required for exemption
+#
+#
+# Version Information:
+#       Version Who             Date            Comment
+#       0.1     emihaye         15/06/2021      Initial draft
+#
+# Usage   : "cappa_exempt.bsh -h" to give usage
+#
+# ********************************************************************
+
+
+LOG=/tmp/cappa_exempt.log
+
+datestamp() {
+#####################################
+# Function to output a formatted date
+#####################################
+# Inputs:       $1 [1|2|3] (optional)
+#                               for 4 different output formats
+# Outputs:      none
+# Returns:      0 success
+#####################################
+[[ $1 -eq 1 ]] && date +%H:%M:%S
+[[ $1 -eq 2 ]] && date +%d-%m-%Y_%H-%M-%S
+[[ $1 -eq 3 ]] && date +%Y-%m-%d
+[[ -z $1 ]] && date
+
+return 0
+}
+
+
+logOut() {
+#####################################
+# Function to send formatted output to STDOUT and $LOG
+#####################################
+# Inputs:       $1 [DEBUG|WARN|ERROR|INFO|ECHO]
+#                               for the type of formatting
+#                       $2 <string>
+#                               for the message
+# Outputs:      none
+# Returns:      0 success
+#                       1 incorrect usage
+#####################################
+[[ "$1" == "DEBUG" ]] && {
+        [[ "$DEBUG" == "y" ]] && echo -e $(datestamp 1)"   [DEBUG]\t${@:2}" |$TEE -a $LOG 2>&1
+        return 0
+        }
+[[ "$1" == "WARN" ]] && {
+        echo -e $(datestamp 1)"   \033[1;30;33m[WARNING]\033[0m   ${@:2}"
+        echo -e $(datestamp 1)"   [WARNING]   ${@:2}" >> $LOG 2>&1
+        return 0
+        }
+[[ "$1" == "ERROR" ]] && {
+        echo -e  $(datestamp 1)"   \033[1;30;31m[ERROR]\033[0m   ${@:2}"
+        echo -e  $(datestamp 1)"   [ERROR]   ${@:2}" >> $LOG 2>&1
+        return 0
+        }
+[[ "$1" == "INFO" ]] && {
+        echo -e $(datestamp 1)"   \033[1;30;32m[INFO]\033[0m   ${@:2}"
+        echo -e $(datestamp 1)"   [INFO]   ${@:2}" >> $LOG 2>&1
+        return 0
+        }
+[[ "$1" == "ECHO" ]] && {
+        echo -e $(datestamp 1)"   [ECHO]   ${@:2}" 
+        return 0
+        }
+echo -e "[WARNING: bad $FUNCNAME call]\t$@" |$TEE -a $LOG 2>&1
+return 1
+}
+
+exitOut () {
+#####################################
+# Function to exit the script with a code and message
+#####################################
+# Inputs:       $1 <integer>
+#                               for the exit code to be used
+#                       $2 <string>
+#                               for the exit message
+# Outputs:      none
+# Returns:      exit
+#####################################
+
+local l_exitCode="${1:-0}"
+local l_exitMsg="${@:2}"
+
+
+if      [[ $l_exitCode -ne 0 ]]; then
+        	logOut "ERROR" "$l_exitMsg"
+else
+        	logOut "ECHO" "$l_exitMsg"
+fi
+
+exit $l_exitCode
+
+}
+
+
+usage() {
+#####################################
+# Function to output usage help
+#####################################
+# Inputs:       none
+# Outputs:      none
+# Returns:      0
+#####################################
+logOut "DEBUG" "$FUNCNAME: running with ARGS:[$@]"
+
+cat << EOF
+
+Usage:  cappa_exempt.bsh -d <csv directory name> -c <POD name> [-h]
+
+        Where :
+                -d Name of the directory containing the csv files
+		-c name (or start of name) of a POD to report on (use all if all pods required)
+                -h      Print help (this message).
+
+        Example:
+                cappa_merge.bsh -d /root/mycsv -c cmserv
+                cappa_merge.bsh -d /var/tmp -c all
+
+EOF
+
+return 0
+
+}
+
+pod-list() {
+#####################################
+# Function to build pod list
+#####################################
+# Inputs:       none
+# Outputs:      none
+# Returns:      0
+#####################################
+logOut "DEBUG" "$FUNCNAME: running with ARGS:[$@]"
+
+
+echo "accesscontrol" > /tmp/podlist
+echo "amos" >> /tmp/podlist
+echo "apserv" >> /tmp/podlist
+echo "autoid-service" >> /tmp/podlist
+echo "cellserv" >> /tmp/podlist
+echo "cmserv" >> /tmp/podlist
+echo "cmevents" >> /tmp/podlist
+echo "cmutilities" >> /tmp/podlist
+echo "comecimpolicy" >> /tmp/podlist
+echo "consul" >> /tmp/podlist
+echo "dc-history" >> /tmp/podlist
+echo "dlms" >> /tmp/podlist
+echo "domain-proxy" >> /tmp/podlist
+echo "dp-mediation" >> /tmp/podlist
+echo "elex" >> /tmp/podlist
+echo "elasticsearch" >> /tmp/podlist
+echo "elementmanager" >> /tmp/podlist
+echo "eventbasedclient" >> /tmp/podlist
+echo "flowautomation" >> /tmp/podlist
+echo "flsserv" >> /tmp/podlist
+echo "fmalarmprocessing" >> /tmp/podlist
+echo "fm-history" >> /tmp/podlist
+echo "fmserv" >> /tmp/podlist
+echo "general-scripting" >> /tmp/podlist
+echo "gossiprouter-cache" >> /tmp/podlist
+echo "gossiprouter-eap7" >> /tmp/podlist
+echo "gossiprouter-remoting" >> /tmp/podlist
+echo "haproxy" >> /tmp/podlist
+echo "impexpserv" >> /tmp/podlist
+echo "jms" >> /tmp/podlist
+echo "ipsmserv" >> /tmp/podlist
+echo "kpicalcserv" >> /tmp/podlist
+echo "kpiserv" >> /tmp/podlist
+echo "kvstore" >> /tmp/podlist
+echo "lcmserv" >> /tmp/podlist
+echo "medrouter" >> /tmp/podlist
+echo "Modeldeployservice" >> /tmp/podlist
+echo "models" >> /tmp/podlist
+echo "msap" >> /tmp/podlist
+echo "mscmip" >> /tmp/podlist
+echo "msapgfm" >> /tmp/podlist
+echo "mspmip" >> /tmp/podlist
+echo "mscm" >> /tmp/podlist
+echo "mscmapg" >> /tmp/podlist
+echo "mscmce" >> /tmp/podlist
+echo "mskpirt" >> /tmp/podlist
+echo "msfm" >> /tmp/podlist
+echo "msnetlog" >> /tmp/podlist
+echo "mspm" >> /tmp/podlist
+echo "mssnmpfm" >> /tmp/podlist
+echo "mssnmpcm" >> /tmp/podlist
+echo "nbalarmirp" >> /tmp/podlist
+echo "nb-fm-snmp" >> /tmp/podlist
+echo "nbi-bnsi-fm" >> /tmp/podlist
+echo "nedoserv" >> /tmp/podlist
+echo "netex" >> /tmp/podlist
+echo "neo4j" >> /tmp/podlist
+echo "nodecli" >> /tmp/podlist
+echo "nodeplugins" >> /tmp/podlist
+echo "ops" >> /tmp/podlist
+echo "openidm" >> /tmp/podlist
+echo "opendj" >> /tmp/podlist
+echo "pkiraserv" >> /tmp/podlist
+echo "pmrouterpolicy" >> /tmp/podlist
+echo "pmserv" >> /tmp/podlist
+echo "postgres" >> /tmp/podlist
+echo "secserv" >> /tmp/podlist
+echo "sentinel" >> /tmp/podlist
+echo "shmcoreserv" >> /tmp/podlist
+echo "shmserv" >> /tmp/podlist
+echo "smrsserv" >> /tmp/podlist
+echo "sps" >> /tmp/podlist
+echo "sso" >> /tmp/podlist
+echo "supervc" >> /tmp/podlist
+echo "saserv" >> /tmp/podlist
+echo "solr" >> /tmp/podlist
+echo "solrautoid" >> /tmp/podlist
+echo "eric-enm-troubleshooting-utils" >> /tmp/podlist
+echo "uiserv" >> /tmp/podlist
+echo "visinamingnb" >> /tmp/podlist
+echo "visinamingsb" >> /tmp/podlist
+echo "vaultserv" >> /tmp/podlist
+echo "winfiol" >> /tmp/podlist
+echo "wpserv" >> /tmp/podlist
+
+
+return 0
+
+}
+
+granted-capabilities() {
+#####################################
+# Function to process granted-capabilities
+#####################################
+# Inputs:       none
+# Outputs:      none
+# Returns:      0
+#####################################
+logOut "DEBUG" "$FUNCNAME: running with ARGS:[$@]"
+_file="granted-capabilities"
+logOut "INFO" "Building exemption list for ${POD}"
+
+mkdir -p /var/tmp/cappa_exempt/${POD} > /dev/null 2>&1
+cd /var/tmp/cappa_exempt/${POD}
+> /var/tmp/cappa_exempt/${POD}/tmp_granted-capabilities_exempt.csv
+
+IFS=","
+
+if [[ "${POD}" == "Overall_Summary" ]]; then
+	cat /var/tmp/cappa_exempt/${POD}/exempt_summary.csv | cut -d "," -f 5,10 | sort > /var/tmp/cappa_exempt/${POD}/granted-capabilities_cut.csv
+else
+	grep "${POD}-" ${DB}/${POD}/granted-capabilities.csv | cut -d "," -f 5,10 | sort > /var/tmp/cappa_exempt/${POD}/granted-capabilities_cut.csv
+fi
+
+exec 3< /var/tmp/cappa_exempt/${POD}/granted-capabilities_cut.csv
+
+read _cap _COUNT <&3
+_lcap="${_cap}"
+_CNT="${_COUNT}"
+
+while read  _cap _COUNT <&3
+do
+        if [[ "$_cap" == "$_lcap" ]]; then
+                _CNT=$((_CNT + _COUNT))
+                continue
+        fi
+	_lcapx=${_lcap:4}
+        echo "${POD},$_lcapx,$_CNT" >> /var/tmp/cappa_exempt/${POD}/tmp_granted-capabilities_exempt.csv
+        _lcap="${_cap}"
+        _CNT="${_COUNT}"
+done
+_lcapx=${_lcap:4}
+echo "${POD},$_lcapx,$_CNT" >> /var/tmp/cappa_exempt/${POD}/tmp_granted-capabilities_exempt.csv
+exec 3>&-
+
+echo "================================================================================" >> /var/tmp/cappa_exempt/${POD}/capabilities_exempt.txt
+echo "          Container ${POD}" >> /var/tmp/cappa_exempt/${POD}/capabilities_exempt.txt
+echo "" >> /var/tmp/cappa_exempt/${POD}/capabilities_exempt.txt
+
+grep 'KILL\|MKNOD\|SETUID\|SETGID\|AUDIT_WRITE\|DAC_READ_SEARCH\|SYS_ADMIN\|SYS_RESOURCE\|SYS_TTY_CONFIG' /var/tmp/cappa_exempt/${POD}/tmp_granted-capabilities_exempt.csv > /var/tmp/cappa_exempt/${POD}/tmp_gc
+_rcnt=`wc -l < /var/tmp/cappa_exempt/${POD}/tmp_gc`
+if [[ ${_rcnt} -gt 0 ]]; then
+	echo "               Restricted capabilities required:" >> /var/tmp/cappa_exempt/${POD}/capabilities_exempt.txt
+	exec 3< /var/tmp/cappa_exempt/${POD}/tmp_gc
+	while read _pod _cap _COUNT <&3
+	do
+		printf "     %26.26s       (%s)\n" "${_cap}" "${_COUNT}" >> /var/tmp/cappa_exempt/${POD}/capabilities_exempt.txt
+		echo "x,x,x,x,CAP_${_cap},x,x,x,x,${_COUNT},x,x" >> /var/tmp/cappa_exempt/${POD}/exempt_summary.csv
+	done
+	echo "               --------------------" >> /var/tmp/cappa_exempt/${POD}/capabilities_exempt.txt
+	exec 3>&-
+fi
+
+grep 'CHOWN\|DAC_OVERRIDE\|FSETID\|FOWNER\|NET_RAW\|SETPCAP\|NET_BIND_SERVICE\|SYS_CHROOT' /var/tmp/cappa_exempt/${POD}/tmp_granted-capabilities_exempt.csv > /var/tmp/cappa_exempt/${POD}/tmp_gc
+_acnt=`wc -l < /var/tmp/cappa_exempt/${POD}/tmp_gc`
+if [[ ${_acnt} -gt 0 ]]; then
+	echo "               Allowed capabilities required:" >> /var/tmp/cappa_exempt/${POD}/capabilities_exempt.txt
+        exec 3< /var/tmp/cappa_exempt/${POD}/tmp_gc
+        while read _pod _cap _COUNT <&3
+        do
+		printf "     %26.26s       (%s)\n" "${_cap}" "${_COUNT}" >> /var/tmp/cappa_exempt/${POD}/capabilities_exempt.txt
+		echo "x,x,x,x,CAP_${_cap},x,x,x,x,${_COUNT},x,x" >> /var/tmp/cappa_exempt/${POD}/exempt_summary.csv
+        done
+        echo "               --------------------" >> /var/tmp/cappa_exempt/${POD}/capabilities_exempt.txt
+	exec 3>&-
+fi
+
+grep -v 'CHOWN\|DAC_OVERRIDE\|FSETID\|FOWNER\|NET_RAW\|SETPCAP\|NET_BIND_SERVICE\|SYS_CHROOT\|KILL\|MKNOD\|SETUID\|SETGID\|AUDIT_WRITE\|DAC_READ_SEARCH\|SYS_ADMIN\|SYS_RESOURCE\|SYS_TTY_CONFIG' /var/tmp/cappa_exempt/${POD}/tmp_granted-capabilities_exempt.csv > /var/tmp/cappa_exempt/${POD}/tmp_gc
+_ucnt=`wc -l < /var/tmp/cappa_exempt/${POD}/tmp_gc`
+if [[ ${_ucnt} -gt 0  ]]; then
+        exec 3< /var/tmp/cappa_exempt/${POD}/tmp_gc
+	read _pod _cap _COUNT <&3
+	if [[ ! -z "${_cap}" ]]; then
+		echo "               Unknown capabilities required:" >> /var/tmp/cappa_exempt/${POD}/capabilities_exempt.txt
+		printf "     %26.26s       (%s)\n" "${_cap}" "${_COUNT}" >> /var/tmp/cappa_exempt/${POD}/capabilities_exempt.txt
+		echo "x,x,x,x,CAP_${_cap},x,x,x,x,${_COUNT},x,x" >> /var/tmp/cappa_exempt/${POD}/exempt_summary.csv
+		while read _pod _cap _COUNT <&3
+		do
+			[[ -z "${_cap}" ]] && continue
+			printf "     %26.26s       (%s)\n" "${_cap}" "${_COUNT}" >> /var/tmp/cappa_exempt/${POD}/capabilities_exempt.txt
+			echo "x,x,x,x,CAP_${_cap},x,x,x,x,${_COUNT},x,x" >> /var/tmp/cappa_exempt/${POD}/exempt_summary.csv
+		done
+		echo "               --------------------" >> /var/tmp/cappa_exempt/${POD}/capabilities_exempt.txt
+	fi
+	exec 3>&-
+fi
+
+echo "" >> /var/tmp/cappa_exempt/${POD}/capabilities_exempt.txt
+
+cat /var/tmp/cappa_exempt/${POD}/tmp_granted-capabilities_exempt.csv >> /var/tmp/cappa_exempt/${POD}/granted-capabilities_exempt.csv
+
+
+return 0
+}
+
+#############
+#
+#       MAIN
+#
+#############
+
+while getopts ":d:c:h" opt; do
+        case $opt in
+        d)              #set the csv directory to use
+                        DB="$OPTARG"
+                        ;;
+        c)              #set the pod name to query on
+                        POD="$OPTARG"
+                        ;;
+        h)              # Print help and exitOut OK
+                        usage
+                        exitOut 0
+                        ;;
+        \?)             # Hint to run usage
+                        usage
+                        exitOut 1 "Invalid option \"-$OPTARG\" supplied."
+                        ;;
+        :)              #capture options with missing args
+                        exitOut 1 "Missing argument for \"-$OPTARG\"\n\t\t\tRun \"${SCRIPT_NAME} -h\" for help\n"
+                        ;;
+        esac
+done
+
+# Should be no extra stuff on the command line
+shift $((${OPTIND} - 1))
+[[ $# -ne 0 ]] && exitOut 1 "Invalid command line option detected:[$@]\n\n$(usage)"
+
+[[ -d "${DB}" ]] || exitOut 1 "csv directory $DB does not exist.\n\n$(usage)"
+[[ -f "${DB}/${POD}/granted-capabilities.csv" ]] || exitOut 1 "csv granted-capabilities.csv  does not exist.\n\n$(usage)"
+[[ -f "${DB}/${POD}/granted-stacks.csv" ]] || exitOut 1 "csv granted-stacks.csv  does not exist.\n\n$(usage)"
+
+
+[[ -z  "${POD}" ]] && exitOut 1 "POD name missing.\n\n$(usage)"
+[[ -z  "${DB}" ]] && exitOut 1 "csv directory name missing.\n\n$(usage)"
+
+pod-list || exitOut 1 "Error in pod-list function"
+
+> /var/tmp/cappa_exempt/${POD}/capabilities_exempt.txt
+> /var/tmp/cappa_exempt/${POD}/exempt_summary.csv
+echo "PODNAME,CAP,COUNT" > /var/tmp/cappa_exempt/${POD}/granted-capabilities_exempt.csv
+granted-capabilities || exitOut 1 "Error in granted-capabilities function"
+
+echo "================================================================================" >> /var/tmp/cappa_exempt/${POD}/capabilities_exempt.txt
+echo "================================================================================" >> /var/tmp/cappa_exempt/${POD}/stacks_exempt.txt
+
+
+logOut "INFO" "cappa_exempt Complete"
+exitOut 0 "Finished"

@@ -1,0 +1,6 @@
+securityContext:
+  privileged: false
+  capabilities:
+    add:
+    drop:
+      - all
